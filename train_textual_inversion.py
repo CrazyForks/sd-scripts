@@ -581,8 +581,8 @@ class TextualInversionTrainer:
 
                         if batch["masks"] is not None:
                             masked_latents = vae.encode(
-                                batch["masked_images"].to(dtype=weight_dtype)
-                            ).latent_dist.sample()
+                                batch["masked_images"].to(dtype=vae_dtype)
+                            ).latent_dist.sample().to(dtype=weight_dtype)
                             masked_latents = masked_latents * self.vae_scale_factor
 
                             # Resize the mask to latents shape as we concatenate the mask to the latents

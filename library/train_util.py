@@ -64,7 +64,7 @@ from library import custom_train_functions, sd3_utils
 from library.original_unet import UNet2DConditionModel
 from huggingface_hub import hf_hub_download
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 import imagesize
 import cv2
 import safetensors.torch

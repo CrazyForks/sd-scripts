@@ -149,7 +149,9 @@ a photo of a cat sitting on a sofa
 --w 512 --h 512 --d 42
 ```
 
-Note that the image path cannot contain the text ` --`, as the prompt parser will take that as the start of an argument. The script will load the reference image, generate a random mask, and run the inpainting pipeline so that sample images reflect the actual inpainting task. If the specified image file does not exist, that sample is skipped with a warning rather than aborting training.
+Note that the image path cannot contain the text ` --`, as the prompt parser will take that as the start of an argument. The script will load the reference image, generate a mask, and run the inpainting pipeline so that sample images reflect the actual inpainting task. If the specified image file does not exist, that sample is skipped with a warning rather than aborting training.
+
+The mask used for sampling is a single "wobbly ellipse" shape (`wobbly_ellipse_mask` in `library/mask_generator.py`), which is simpler than the cloud/polygon/shape mixtures used during training. This is intentional — sample previews benefit from a clearly delimited region, whereas training benefits from diverse shapes for generalization. `inpainting_minimal_inference.py` uses the same wobbly-ellipse mask when `--mask` is omitted.
 
 When `--train_inpainting` is set, prompt lines without `--i` are skipped with a warning (no sample is produced for that line). Add `--i` to every prompt you want sampled during inpainting training.
 
@@ -165,7 +167,9 @@ a photo of a cat sitting on a sofa
 --w 512 --h 512 --d 42
 ```
 
-画像パスに ` --` という文字列を含めることはできません（プロンプトパーサーが引数の開始として解釈するため）。スクリプトは参照画像を読み込み、ランダムなマスクを生成し、インペインティングパイプラインを実行することで、サンプル画像が実際のインペインティングタスクを反映したものになります。指定した画像ファイルが存在しない場合、学習を中断せずに警告を出してそのサンプルをスキップします。
+画像パスに ` --` という文字列を含めることはできません（プロンプトパーサーが引数の開始として解釈するため）。スクリプトは参照画像を読み込み、マスクを生成し、インペインティングパイプラインを実行することで、サンプル画像が実際のインペインティングタスクを反映したものになります。指定した画像ファイルが存在しない場合、学習を中断せずに警告を出してそのサンプルをスキップします。
+
+サンプリングで使用されるマスクは単一の「ぐにゃっとした楕円」形状（`library/mask_generator.py` の `wobbly_ellipse_mask`）であり、学習時に使用される cloud/polygon/shape の混合マスクよりも単純です。これは意図的なもので、サンプルプレビューでは明確に区切られた領域があるほうが見やすく、学習側では汎化のために多様な形状が望ましいためです。`inpainting_minimal_inference.py` も `--mask` を省略した場合は同じ wobbly-ellipse マスクを使用します。
 
 `--train_inpainting` が設定されている場合、`--i` のないプロンプト行は警告を出してスキップされます（その行のサンプルは生成されません）。インペインティング学習中にサンプリングしたいプロンプトには、すべて `--i` を付けてください。
 
@@ -178,6 +182,7 @@ a photo of a cat sitting on a sofa
 - The mask is applied at latent resolution (1/8 of image resolution), so very fine details at mask boundaries may be imprecise.
 - For best results, start from a pre-existing inpainting checkpoint. Standard checkpoints are supported but will require more training steps to converge.
 - When training SDXL, use `--gradient_checkpointing` and a memory-efficient optimizer (e.g. `Adafactor`) to reduce VRAM usage.
+- Inpainting training (`--train_inpainting`) is a different feature from the `--alpha_mask` loss-mask option. `--train_inpainting` controls the 9-channel UNet input and procedural inpainting mask generation; `--alpha_mask` weights the training loss using the source image's alpha channel. Don't confuse the two when reading docs that mention "mask".
 
 <details>
 <summary>日本語</summary>
@@ -186,4 +191,5 @@ a photo of a cat sitting on a sofa
 - マスクは画像解像度の 1/8 の潜在変数解像度で適用されるため、マスク境界の非常に細かいディテールは不正確になる場合があります。
 - 最良の結果を得るには、既存のインペインティングチェックポイントから学習を開始することをお勧めします。標準チェックポイントもサポートされていますが、収束までにより多くのステップが必要になります。
 - SDXL を学習する場合は、`--gradient_checkpointing` とメモリ効率の良いオプティマイザー（例: `Adafactor`）を使用して VRAM 使用量を削減してください。
+- インペインティング学習（`--train_inpainting`）と `--alpha_mask`（loss mask 機能）は別の機能です。`--train_inpainting` は 9 チャンネル UNet 入力とプロシージャルなインペインティングマスク生成を制御し、`--alpha_mask` はソース画像のアルファチャンネルを学習損失の重みとして使用します。ドキュメントで「マスク」という単語が出てきた際は両者を混同しないようご注意ください。
 </details>

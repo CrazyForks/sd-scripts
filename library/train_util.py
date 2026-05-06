@@ -1684,7 +1684,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 if self.train_inpainting:
                   pil_image = transforms.functional.to_pil_image(img)
-                  mask = self.random_mask(pil_image.size, 1, False)
+                  mask = self.random_mask(pil_image.size)
                   mask, masked_image = self.prepare_mask_and_masked_image(pil_image, mask)
                   
                   masks.append(mask)
@@ -1933,11 +1933,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
     # generate random masks
     @staticmethod
-    def random_mask(im_shape, ratio=1, mask_full_image=False):
-        from library.mask_generator import random_mask as _random_mask, cloud_mask
+    def random_mask(im_shape):
+        from library.mask_generator import random_mask as _random_mask
         w, h = im_shape
-        if mask_full_image:
-            return cloud_mask(w, h, threshold=0.99)
         return _random_mask(w, h)
 
 
@@ -6457,7 +6455,7 @@ def line_to_prompt_dict(line: str) -> dict:
                 prompt_dict["controlnet_image"] = m.group(1)
                 continue
 
-            m = re.match(r"img (.+)", parg, re.IGNORECASE)
+            m = re.match(r"i (.+)", parg, re.IGNORECASE)
             if m:
                 prompt_dict["image"] = m.group(1).strip()
                 continue
@@ -6695,8 +6693,11 @@ def sample_image_inference(
         controlnet_image = Image.open(controlnet_image).convert("RGB")
         controlnet_image = controlnet_image.resize((width, height), Image.LANCZOS)
 
-    height = max(64, height - height % 64)  # round down to divisible by 64 (SDXL requires latents divisible by 8)
-    width = max(64, width - width % 64)  # round down to divisible by 64
+    # Round down so the latent shape is divisible by the UNet's largest stride:
+    # SDXL has 2 downsamples (latent /4 → image /32); SD1.5/2.x has 3 (latent /8 → image /64).
+    divisor = 32 if isinstance(pipeline, SdxlStableDiffusionLongPromptWeightingPipeline) else 64
+    height = max(divisor, height - height % divisor)
+    width = max(divisor, width - width % divisor)
     logger.info(f"prompt: {prompt}")
     logger.info(f"negative_prompt: {negative_prompt}")
     logger.info(f"height: {height}")
@@ -6708,7 +6709,7 @@ def sample_image_inference(
         logger.info(f"seed: {seed}")
 
     # Prepare inpainting source image and mask when training an inpainting model.
-    # The prompt line should include "--img /path/to/image.jpg".
+    # The prompt line should include "--i /path/to/image.jpg".
     # The mask is generated reproducibly from the prompt seed (or randomly if no seed).
     inpaint_image = None
     inpaint_mask = None
@@ -6724,9 +6725,10 @@ def sample_image_inference(
             logger.info(f"inpaint image: {image_path}")
         else:
             logger.warning(
-                "train_inpainting is set but no source image specified in the prompt line. "
-                "Add '--img /path/to/image.jpg' to the prompt to enable inpainting sampling."
+                "train_inpainting is set but no source image specified in the prompt line; "
+                "skipping sample. Add '--i /path/to/image.jpg' to the prompt to enable inpainting sampling."
             )
+            return
 
     with accelerator.autocast(), torch.no_grad():
         latents = pipeline(

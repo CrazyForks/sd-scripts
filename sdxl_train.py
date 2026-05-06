@@ -703,7 +703,7 @@ def train(args):
                 if batch["masks"] is not None:
                     with torch.no_grad():
                         masked_latents = vae.encode(
-                            batch["masked_images"].reshape(batch["images"].shape).to(vae_dtype)
+                            batch["masked_images"].to(vae_dtype)
                         ).latent_dist.sample().to(weight_dtype)
                         masked_latents = masked_latents * sdxl_model_util.VAE_SCALE_FACTOR
 

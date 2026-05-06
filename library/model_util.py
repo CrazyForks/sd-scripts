@@ -1373,8 +1373,10 @@ def expand_unet_to_inpainting(unet) -> None:
 
     if use_conv_in:
         unet.conv_in = new_conv
-        if hasattr(unet, "config") and isinstance(unet.config, dict):
-            unet.config["in_channels"] = 9
+        # diffusers' UNet stores config in a FrozenDict; mutating it directly raises,
+        # so use the register_to_config API to keep unet.config in sync.
+        if hasattr(unet, "register_to_config"):
+            unet.register_to_config(in_channels=9)
     else:
         unet.input_blocks[0][0] = new_conv
     unet.in_channels = 9

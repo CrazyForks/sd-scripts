@@ -929,16 +929,25 @@ class SdxlStableDiffusionLongPromptWeightingPipeline:
         inpaint_masked_image_latent = None
         if inpaint_image is not None and inpaint_mask is not None:
             import numpy as np
-            # Encode masked image: image * (1 - mask)
+            # Encode masked image: image * (1 - mask).
+            # The VAE may run in a different dtype than the UNet (e.g. fp32 with
+            # --no_half_vae, or bf16 to avoid SDXL's fp16 VAE NaN issue), so cast
+            # to self.vae.dtype here — mirroring the existing decode_latents path
+            # (`self.vae.decode(latents.to(self.vae.dtype))`).
             img_np = np.array(inpaint_image.convert("RGB")).astype(np.float32) / 127.5 - 1.0
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1)[None].to(device=device, dtype=dtype)
+            img_t = torch.from_numpy(img_np).permute(2, 0, 1)[None].to(device=device, dtype=self.vae.dtype)
             mask_np = np.array(inpaint_mask.convert("L")).astype(np.float32) / 255.0
             mask_np = (mask_np >= 0.5).astype(np.float32)
-            mask_t = torch.from_numpy(mask_np)[None, None].to(device=device, dtype=dtype)
+            mask_t = torch.from_numpy(mask_np)[None, None].to(device=device, dtype=self.vae.dtype)
             masked_img_t = img_t * (1.0 - mask_t)
-            inpaint_masked_image_latent = (
-                self.vae.encode(masked_img_t).latent_dist.sample() * sdxl_model_util.VAE_SCALE_FACTOR
-            )
+            # Disable autocast: under fp16 autocast (set by accelerator.autocast() in
+            # train_util.sample_image_inference), conv kernels run in fp16 even when
+            # weights/inputs are fp32 — and SDXL VAE produces NaN in fp16. This mirrors
+            # how decode_latents() runs *outside* the autocast block in the caller.
+            with torch.autocast(device_type=device.type, enabled=False):
+                inpaint_masked_image_latent = (
+                    self.vae.encode(masked_img_t).latent_dist.sample() * sdxl_model_util.VAE_SCALE_FACTOR
+                )
             inpaint_mask_latent = torch.nn.functional.interpolate(
                 mask_t, size=(height // 8, width // 8)
             )

@@ -189,47 +189,6 @@ def encode_text_sdxl(tokenizer1, text_model1, tokenizer2, text_model2, text: str
 
 
 # -------------------------------------------------------------------------
-# Denoising loop (shared between SD1.5 and SDXL)
-# -------------------------------------------------------------------------
-
-def denoise(
-    unet,
-    scheduler,
-    latents,           # (1, 4, H, W)
-    mask_latent,       # (1, 1, H, W)
-    masked_latents,    # (1, 4, H, W)
-    cond_args,         # tuple of args forwarded to unet after noisy_latents+t
-    uncond_args,       # same for uncond
-    steps: int,
-    guidance_scale: float,
-    device,
-    dtype,
-):
-    scheduler.set_timesteps(steps, device)
-    timesteps = scheduler.timesteps.to(device)
-
-    with torch.no_grad():
-        for t in tqdm(timesteps):
-            # expand for CFG
-            latent_model_input = torch.cat([latents] * 2)
-            latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-
-            # build 9-channel input: [noisy(4), mask(1), masked_image(4)]
-            mask_in    = mask_latent.repeat(2, 1, 1, 1).to(dtype)
-            masked_in  = masked_latents.repeat(2, 1, 1, 1).to(dtype)
-            unet_input = torch.cat([latent_model_input, mask_in, masked_in], dim=1)
-
-            # call UNet (uncond first, then cond — matching CFG convention)
-            noise_pred_uncond = unet(unet_input[:1], t, *uncond_args)
-            noise_pred_cond   = unet(unet_input[1:], t, *cond_args)
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-
-            latents = scheduler.step(noise_pred, t, latents).prev_sample
-
-    return latents
-
-
-# -------------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------------
 

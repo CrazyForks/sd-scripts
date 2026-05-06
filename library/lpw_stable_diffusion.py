@@ -902,15 +902,23 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
         if inpaint_image is not None and inpaint_mask is not None:
             import numpy as np
             SD15_VAE_SCALE_FACTOR = 0.18215
+            # Cast inpaint inputs to self.vae.dtype rather than the UNet dtype, so
+            # that VAE encode operates in its own precision regardless of mixed
+            # precision settings (mirrors the existing decode path).
             img_np = np.array(inpaint_image.convert("RGB")).astype(np.float32) / 127.5 - 1.0
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1)[None].to(device=device, dtype=dtype)
+            img_t = torch.from_numpy(img_np).permute(2, 0, 1)[None].to(device=device, dtype=self.vae.dtype)
             mask_np = np.array(inpaint_mask.convert("L")).astype(np.float32) / 255.0
             mask_np = (mask_np >= 0.5).astype(np.float32)
-            mask_t = torch.from_numpy(mask_np)[None, None].to(device=device, dtype=dtype)
+            mask_t = torch.from_numpy(mask_np)[None, None].to(device=device, dtype=self.vae.dtype)
             masked_img_t = img_t * (1.0 - mask_t)
-            inpaint_masked_image_latent = (
-                self.vae.encode(masked_img_t).latent_dist.sample() * SD15_VAE_SCALE_FACTOR
-            )
+            # Disable autocast: under fp16 autocast (set by accelerator.autocast() in
+            # the caller), conv kernels run in fp16 even when weights/inputs are fp32,
+            # which can produce NaN in the VAE encode. Mirrors how decode_latents()
+            # runs outside the autocast block in the caller.
+            with torch.autocast(device_type=device.type, enabled=False):
+                inpaint_masked_image_latent = (
+                    self.vae.encode(masked_img_t).latent_dist.sample() * SD15_VAE_SCALE_FACTOR
+                )
             inpaint_mask_latent = torch.nn.functional.interpolate(
                 mask_t, size=(height // 8, width // 8)
             )

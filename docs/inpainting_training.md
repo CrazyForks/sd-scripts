@@ -90,13 +90,13 @@ accelerate launch sdxl_train_network.py \
 
 Use a standard DreamBooth or fine-tuning dataset. No special mask images are required — masks are generated automatically during training.
 
-Note: `cache_latents` must be `false` (the default) when using `train_inpainting`.
+Note: `cache_latents` must be `false` (the default) when using `train_inpainting`. `cache_latents_to_disk` automatically enables `cache_latents`, so it must also be left disabled.
 
 <details>
 <summary>日本語</summary>
 標準的な DreamBooth またはファインチューニング用データセットを使用します。専用のマスク画像は不要です — マスクは学習中に自動生成されます。
 
-注意: `train_inpainting` を使用する場合、`cache_latents` は `false`（デフォルト）のままにしてください。
+注意: `train_inpainting` を使用する場合、`cache_latents` は `false`（デフォルト）のままにしてください。`cache_latents_to_disk` を有効にすると自動で `cache_latents` も有効になるため、こちらも無効のままにする必要があります。
 </details>
 
 ## Minimal inference script / 最低限の推論スクリプト

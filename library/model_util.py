@@ -1355,6 +1355,9 @@ def expand_unet_to_inpainting(unet) -> None:
             f"Expected input conv to have 4 or 9 input channels, got {old_conv.in_channels}"
         )
 
+    device = old_conv.weight.device
+    dtype = old_conv.weight.dtype
+
     new_conv = nn.Conv2d(
         9,
         old_conv.out_channels,
@@ -1362,7 +1365,7 @@ def expand_unet_to_inpainting(unet) -> None:
         stride=old_conv.stride,
         padding=old_conv.padding,
         bias=old_conv.bias is not None,
-    )
+    ).to(device=device, dtype=dtype)
 
     with torch.no_grad():
         # Zero-initialise all 9 channels, then copy the original 4

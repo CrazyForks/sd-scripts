@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Smoke test for --train_inpainting with sdxl_train.py.
+# Smoke test for --train_inpainting on SDXL (both full FT and LoRA).
 #
-# IMPORTANT: requires a Stable Diffusion XL *inpainting* checkpoint (in_channels=9).
-# A standard SDXL base model has in_channels=4 and will fail at the UNet forward pass.
-#
-# Compatible models:
-#   - diffusers/stable-diffusion-xl-1.0-inpainting-0.1  (HuggingFace hub ID or local path)
-#   - Any local .safetensors converted from the above
+# Modes:
+#   ft   — sdxl_train.py (full fine-tune)
+#          Accepts SDXL inpainting checkpoints (in_channels=9) AND standard
+#          SDXL base models (in_channels=4 — conv_in is auto-expanded).
+#          Output is a full UNet checkpoint; verifier asserts conv_in=9ch.
+#   lora — sdxl_train_network.py (LoRA)
+#          Requires an SDXL inpainting checkpoint (in_channels=9). LoRA does
+#          not extend conv_in, so a standard SDXL will fail at UNet forward.
+#          Output is a LoRA-only file; verifier checks for lora_unet_* keys.
 #
 # Usage:
-#   bash tests/run_sdxl_inpainting_test.sh /path/to/sdxl-inpainting.safetensors
+#   bash tests/run_sdxl_inpainting_test.sh --mode {ft|lora} --model PATH \
+#                                          [--data DIR] [--steps N]
 #
-#   # Optional: use real downloaded data instead of synthetic images
-#   bash tests/run_sdxl_inpainting_test.sh /path/to/model.safetensors tests/downloaded_data
+# Data resolution when --data is omitted:
+#   tests/downloaded_data (if present and non-empty)
+#     → tests/test_data    (synthetic; auto-generated if absent)
 #
-# The test runs 20 optimiser steps using sdxl_train.py + sdxl_inpainting_test.toml.
-# Success criterion: exit 0 and output .safetensors exists.
+# Success criterion: training exits 0, expected .safetensors is produced, and
+# the verifier (tests/_verify_inpainting_checkpoint.py) reports PASS.
 
 set -euo pipefail
 
@@ -23,92 +28,133 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 # ---------------------------------------------------------------------------
-MODEL_PATH="${1:-}"
-if [[ -z "$MODEL_PATH" ]]; then
-    echo "Usage: $0 /path/to/sdxl-inpainting-model.safetensors [data_dir]" >&2
-    echo "" >&2
-    echo "  The model must be an SDXL inpainting model (UNet in_channels=9)." >&2
-    echo "  Standard SDXL base models have in_channels=4 and will not work." >&2
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+MODE=""
+MODEL=""
+DATA=""
+STEPS=""
+
+usage() {
+    cat <<EOF
+Usage: $0 --mode {ft|lora} --model PATH [--data DIR] [--steps N]
+
+  --mode    ft   = sdxl_train.py (full FT; supports 4ch and 9ch base models)
+            lora = sdxl_train_network.py (requires a 9ch inpainting base model)
+  --model   path to .safetensors checkpoint
+  --data    optional training data dir (DreamBooth folder layout)
+  --steps   optional max_train_steps override (default: 20 from TOML)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)   MODE="$2";  shift 2 ;;
+        --model)  MODEL="$2"; shift 2 ;;
+        --data)   DATA="$2";  shift 2 ;;
+        --steps)  STEPS="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+if [[ -z "$MODE" || -z "$MODEL" ]]; then
+    usage >&2
     exit 1
 fi
-
-if [[ ! -e "$MODEL_PATH" ]]; then
-    echo "Error: model not found: $MODEL_PATH" >&2
+if [[ "$MODE" != "ft" && "$MODE" != "lora" ]]; then
+    echo "Error: --mode must be 'ft' or 'lora' (got: $MODE)" >&2
     exit 1
 fi
-
-# Optional second argument: training data directory (DreamBooth folder layout)
-DATA_DIR="${2:-}"
-OUTPUT_DIR="$SCRIPT_DIR/test_output_sdxl"
+if [[ ! -e "$MODEL" ]]; then
+    echo "Error: model not found: $MODEL" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
-# Data: use supplied dir, downloaded data, or synthetic fallback
-if [[ -z "$DATA_DIR" ]]; then
-    SYNTHETIC_DIR="$SCRIPT_DIR/test_data"
-    DOWNLOADED_DIR="$SCRIPT_DIR/downloaded_data"
+# Data resolution
+# ---------------------------------------------------------------------------
 
-    if [[ -d "$DOWNLOADED_DIR" ]] && [[ -n "$(ls -A "$DOWNLOADED_DIR")" ]]; then
-        echo "==> Using previously downloaded data: $DOWNLOADED_DIR"
-        DATA_DIR="$DOWNLOADED_DIR"
+if [[ -z "$DATA" ]]; then
+    DOWNLOADED_DIR="$SCRIPT_DIR/downloaded_data"
+    SYNTHETIC_DIR="$SCRIPT_DIR/test_data"
+
+    if [[ -d "$DOWNLOADED_DIR" ]] && [[ -n "$(ls -A "$DOWNLOADED_DIR" 2>/dev/null || true)" ]]; then
+        DATA="$DOWNLOADED_DIR"
+        echo "==> Using downloaded data: $DATA"
     else
         if [[ ! -d "$SYNTHETIC_DIR" ]]; then
             echo "==> Generating synthetic test images..."
-            python3 "$SCRIPT_DIR/generate_inpainting_test_data.py"
+            python "$SCRIPT_DIR/generate_inpainting_test_data.py"
         fi
-        DATA_DIR="$SYNTHETIC_DIR"
-        echo "==> Using synthetic test images: $DATA_DIR"
-        echo "    (Pass a data dir as \$2, or pre-run download_training_data.py for real images)"
+        DATA="$SYNTHETIC_DIR"
+        echo "==> Using synthetic test images: $DATA"
+        echo "    (Pass --data DIR or pre-run download_training_data.py for real images.)"
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# Mode-specific configuration
+# ---------------------------------------------------------------------------
+
+if [[ "$MODE" == "ft" ]]; then
+    SCRIPT="$REPO_DIR/sdxl_train.py"
+    BASE_TOML="$SCRIPT_DIR/sdxl_inpainting_test_ft.toml"
+    OUTPUT_DIR="$SCRIPT_DIR/test_output_sdxl_ft"
+    OUTPUT_NAME="sdxl_inpainting_test_ft"
+    VERIFY_ARGS=(--expect-in-channels 9)
+else
+    SCRIPT="$REPO_DIR/sdxl_train_network.py"
+    BASE_TOML="$SCRIPT_DIR/sdxl_inpainting_test_lora.toml"
+    OUTPUT_DIR="$SCRIPT_DIR/test_output_sdxl_lora"
+    OUTPUT_NAME="sdxl_inpainting_test_lora"
+    VERIFY_ARGS=(--expect-lora)
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# ---------------------------------------------------------------------------
-# Write a runtime TOML that patches the four path fields into the base config.
-# This avoids embedding absolute paths in the committed config file.
-RUNTIME_TOML="$OUTPUT_DIR/sdxl_inpainting_test_runtime.toml"
-BASE_TOML="$SCRIPT_DIR/sdxl_inpainting_test.toml"
-
-"$REPO_DIR/venv/bin/python3" - <<PYEOF
-import tomllib, toml
-with open("$BASE_TOML", "rb") as f:
-    cfg = tomllib.load(f)
-
-cfg["pretrained_model_name_or_path"] = "$MODEL_PATH"
-cfg["train_data_dir"] = "$DATA_DIR"
-cfg["output_dir"] = "$OUTPUT_DIR"
-cfg["output_name"] = "sdxl_inpainting_lora_test"
-
-with open("$RUNTIME_TOML", "w") as f:
-    toml.dump(cfg, f)
-print(f"Runtime config written to: $RUNTIME_TOML")
-PYEOF
+# Optional CLI overrides on top of the TOML
+EXTRA=()
+if [[ -n "$STEPS" ]]; then
+    EXTRA+=( --max_train_steps "$STEPS" )
+fi
 
 echo ""
-echo "==> Starting SDXL inpainting training smoke test"
-echo "    model  : $MODEL_PATH"
-echo "    data   : $DATA_DIR"
-echo "    output : $OUTPUT_DIR"
-echo "    config : $RUNTIME_TOML"
+echo "==> SDXL inpainting smoke test (mode=$MODE)"
+echo "    script : $SCRIPT"
+echo "    config : $BASE_TOML"
+echo "    model  : $MODEL"
+echo "    data   : $DATA"
+echo "    output : $OUTPUT_DIR/$OUTPUT_NAME.safetensors"
 echo ""
 
 accelerate launch \
     --dynamo_backend no \
     --dynamo_mode default \
-    --mixed_precision bf16 \
     --num_processes 1 \
     --num_machines 1 \
     --num_cpu_threads_per_process 2 \
-    "$REPO_DIR/sdxl_train.py" \
-        --config_file "$RUNTIME_TOML"
+    "$SCRIPT" \
+        --config_file "$BASE_TOML" \
+        --pretrained_model_name_or_path "$MODEL" \
+        --train_data_dir "$DATA" \
+        --output_dir "$OUTPUT_DIR" \
+        --output_name "$OUTPUT_NAME" \
+        ${EXTRA[@]+"${EXTRA[@]}"}
 
 # ---------------------------------------------------------------------------
-EXPECTED="$OUTPUT_DIR/sdxl_inpainting_lora_test.safetensors"
-if [[ -f "$EXPECTED" ]]; then
-    echo ""
-    echo "==> PASS: output model created at $EXPECTED"
-else
+# Verify output
+# ---------------------------------------------------------------------------
+
+EXPECTED="$OUTPUT_DIR/$OUTPUT_NAME.safetensors"
+if [[ ! -f "$EXPECTED" ]]; then
     echo ""
     echo "==> FAIL: expected output not found: $EXPECTED" >&2
     exit 1
 fi
+
+python "$SCRIPT_DIR/_verify_inpainting_checkpoint.py" "$EXPECTED" "${VERIFY_ARGS[@]}"
+
+echo ""
+echo "==> PASS"

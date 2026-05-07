@@ -47,8 +47,10 @@ If you find this project helpful, please consider supporting its development via
 
 ### Change History
 
-- The following are the main changes planned for the next release. Please note that these changes may be subject to change without notice before the release.
+- **Version 0.10.4 (2026-05-07):**
     - Improved compatibility with Intel GPUs. Thanks to WhitePr for [PR #2307](https://github.com/kohya-ss/sd-scripts/pull/2307).
+    - Support for training inpainting models for SD 1.5/SDXL has been added. Thanks to allanoepping for [PR #2309](https://github.com/kohya-ss/sd-scripts/pull/2309) (followed by [PR #2318](https://github.com/kohya-ss/sd-scripts/pull/2318)).
+        - For details, please refer to the [documentation](./docs/inpainting_training.md).
 
 - **Version 0.10.3 (2026-04-02):**
     - Stability when training with fp16 on Anima has been further improved. See [PR #2302](https://github.com/kohya-ss/sd-scripts/pull/2302) for details. We deeply appreciate those who reported the issue.
